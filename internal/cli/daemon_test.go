@@ -139,12 +139,12 @@ func TestConcurrentRunsStartOneDaemon(t *testing.T) {
 			t.Fatalf("app%d: %d", i, code)
 		}
 	}
-	out, err := exec.Command("sh", "-c", "pgrep -f '"+e.bin+" daemon run' | wc -l").Output()
+	out, err := exec.Command("pgrep", "-f", e.bin+" daemon run").Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := strings.TrimSpace(string(out)); got != "1" {
-		t.Fatalf("%s daemons", got)
+	if got := strings.Fields(string(out)); len(got) != 1 {
+		t.Fatalf("daemons %v", got)
 	}
 }
 

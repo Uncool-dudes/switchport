@@ -53,7 +53,7 @@ func openRegistry() (*registry.Registry, error) {
 
 // routeURL includes the port only when the daemon could not take 443.
 func routeURL(name route.Name) string {
-	url := "https://" + name.String() + "." + defaultTLD
+	url := "https://" + name.String() + "." + tlds()[0]
 	dir, err := stateDir()
 	if err != nil {
 		return url

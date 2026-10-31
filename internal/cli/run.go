@@ -102,6 +102,35 @@ func nameFromDir(dir string) string {
 	return strings.Trim(invalidLabelChars.ReplaceAllString(base, "-"), "-")
 }
 
+// bundleEnvs are variables common TLS clients read, so a child can call
+// another app's https:// URL with no setup. The value is a bundle, not only our
+// CA, because several of them replace the default roots instead of adding.
+var bundleEnvs = []string{"SSL_CERT_FILE", "REQUESTS_CA_BUNDLE"}
+
+// extraCAEnv adds to the default roots, so it takes just our CA.
+const extraCAEnv = "NODE_EXTRA_CA_CERTS"
+
+type certFiles struct{ ca, bundle string }
+
+// childEnv never overrides a certificate variable the user already set.
+func childEnv(base []string, port int, url string, certs certFiles) []string {
+	has := func(key string) bool {
+		return slices.ContainsFunc(base, func(kv string) bool { return strings.HasPrefix(kv, key+"=") })
+	}
+	env := append(slices.Clone(base), "PORT="+strconv.Itoa(port), "SWITCHPORT_URL="+url)
+	if certs.ca != "" && !has(extraCAEnv) {
+		env = append(env, extraCAEnv+"="+certs.ca)
+	}
+	if certs.bundle != "" {
+		for _, key := range bundleEnvs {
+			if !has(key) {
+				env = append(env, key+"="+certs.bundle)
+			}
+		}
+	}
+	return env
+}
+
 // substitutePort replaces every {port} in the command. It is text only, so the
 // user states how their tool takes a port and no tool needs to be recognized.
 func substitutePort(argv []string, port int) []string {
@@ -158,7 +187,7 @@ func runCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	argv := substitutePort(opts.argv, port)
 	cmd := exec.Command(argv[0], argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
-	cmd.Env = append(os.Environ(), "PORT="+strconv.Itoa(port))
+	cmd.Env = childEnv(os.Environ(), port, routeURL(name), certPaths())
 
 	foreground := holdsTerminal()
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Foreground: foreground}

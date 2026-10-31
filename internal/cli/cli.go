@@ -14,6 +14,10 @@ const usage = `usage:
   switchport alias <name> <port> [--force] [--h2c]
   switchport alias --remove <name>
   switchport prune
+  switchport setup [--tld name]
+  switchport doctor
+  switchport uninstall
+  switchport service install|uninstall
   switchport trust [--remove]
   switchport daemon run|status|stop
   switchport version
@@ -54,6 +58,14 @@ func Main(ctx context.Context, version string, args []string, stdout, stderr io.
 		return aliasCommand(args[1:], stdout, stderr)
 	case "prune":
 		return pruneCommand(stdout, stderr)
+	case "setup":
+		return setupCommand(args[1:], stdout, stderr)
+	case "doctor":
+		return doctorCommand(ctx, stdout, stderr)
+	case "uninstall":
+		return uninstallCommand(stdout, stderr)
+	case "service":
+		return serviceCommand(args[1:], stdout, stderr)
 	case "trust":
 		return trustCommand(args[1:], stdout, stderr)
 	case "daemon":

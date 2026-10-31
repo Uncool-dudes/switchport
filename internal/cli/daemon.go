@@ -21,8 +21,6 @@ const (
 	daemonDisable = "off"
 )
 
-func tlds() []string { return []string{defaultTLD} }
-
 func ensureDaemon() error {
 	if os.Getenv(daemonEnv) == daemonDisable {
 		return nil
