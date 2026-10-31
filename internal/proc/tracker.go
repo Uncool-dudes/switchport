@@ -69,6 +69,12 @@ func (t *Tracker) Listeners() ([]Listener, error) {
 	return listenersOf(pids)
 }
 
+// Alive reports whether any process in the tree is still running.
+func (t *Tracker) Alive() (bool, error) {
+	pids, err := t.refresh()
+	return len(pids) > 0, err
+}
+
 // Signal sends sig to every live process in the tree.
 func (t *Tracker) Signal(sig syscall.Signal) error {
 	pids, err := t.refresh()

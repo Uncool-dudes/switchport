@@ -230,6 +230,18 @@ func TestDiscoverPrefersHTTPOverEarlierRawPort(t *testing.T) {
 	}
 }
 
+func TestDiscoverPinnedAcceptsOnlyAssignedPort(t *testing.T) {
+	first, second := freePort(t), freePort(t)
+	c := start(t, "two-http", nil, loop4(first), loop4(second))
+	r, err := Discover(t.Context(), c.tr, Options{Assigned: second, Pinned: true, Settle: time.Millisecond, Timeout: 5 * time.Second, Exited: c.exited})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Port != second {
+		t.Fatalf("port %d, want %d", r.Port, second)
+	}
+}
+
 func TestDiscoverReportsAmbiguousPorts(t *testing.T) {
 	c := start(t, "two-http", nil, loop4(freePort(t)), loop4(freePort(t)))
 	r, err := c.discover(t, freePort(t))

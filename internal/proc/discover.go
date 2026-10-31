@@ -18,6 +18,7 @@ var (
 // Options tune Discover.
 type Options struct {
 	Assigned int             // port offered through PORT or {port}
+	Pinned   bool            // accept only the assigned port
 	Settle   time.Duration   // wait for further listeners before choosing
 	Timeout  time.Duration   // give up after this long
 	Exited   <-chan struct{} // closed when the command exits
@@ -52,7 +53,7 @@ func Discover(ctx context.Context, tr *Tracker, o Options) (Result, error) {
 			if l.Port == o.Assigned {
 				return Result{Listener: l, HTTP: answersHTTP(ctx, l), Candidates: listeners, Elapsed: time.Since(start)}, nil
 			}
-			if !seen[l.Port] {
+			if !o.Pinned && !seen[l.Port] {
 				seen[l.Port] = true
 				order = append(order, l)
 			}
