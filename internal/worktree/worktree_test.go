@@ -40,7 +40,9 @@ func TestPrefix(t *testing.T) {
 		t.Errorf("linked: %q", got)
 	}
 	sub := filepath.Join(linked, "cmd")
-	os.Mkdir(sub, 0o755)
+	if err := os.Mkdir(sub, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	if got := Prefix(t.Context(), sub); got != "ananth-fix-ui" {
 		t.Errorf("subdirectory: %q", got)
 	}

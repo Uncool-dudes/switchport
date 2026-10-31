@@ -43,7 +43,7 @@ func checkLabel(label string) error {
 		return fmt.Errorf("label %q starts or ends with a hyphen", label)
 	}
 	for _, c := range []byte(label) {
-		if !(c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-') {
+		if !isLabelByte(c) {
 			return fmt.Errorf("label %q contains %q", label, c)
 		}
 	}
@@ -64,4 +64,8 @@ func (n *Name) UnmarshalText(text []byte) error {
 	}
 	*n = parsed
 	return nil
+}
+
+func isLabelByte(c byte) bool {
+	return c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-'
 }

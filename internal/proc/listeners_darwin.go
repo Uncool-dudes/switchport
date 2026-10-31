@@ -19,7 +19,8 @@ func listenersOf(pids []int) ([]Listener, error) {
 	}
 	out, err := exec.Command("lsof", "-nP", "-a", "-p", strings.Join(list, ","), "-iTCP", "-sTCP:LISTEN", "-Fpn").Output()
 	var ee *exec.ExitError
-	if err != nil && !(errors.As(err, &ee) && ee.ExitCode() == 1) {
+	noMatches := errors.As(err, &ee) && ee.ExitCode() == 1
+	if err != nil && !noMatches {
 		return nil, fmt.Errorf("lsof: %w", err)
 	}
 	return parseLsof(out), nil

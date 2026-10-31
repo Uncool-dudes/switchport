@@ -1,0 +1,10 @@
+version: "2"
+linters:
+  exclusions:
+    # Terminal writes and best-effort cleanup have no useful failure path.
+    presets:
+      - std-error-handling
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
