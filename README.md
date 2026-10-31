@@ -58,7 +58,9 @@ switchport uninstall
 
 - The name defaults to the directory name.
 - `{port}` in a command is replaced, for tools that take a port as a flag:
-  `switchport run web -- vite --port {port}`.
+  `switchport run web -- vite --port {port}`. A dev server configured with a fixed port and
+  `strictPort` ignores `PORT`; pass the allocated port through the package script instead:
+  `switchport run web -- pnpm dev --port {port}`.
 - A command with several ports routes to the first that answers HTTP. Use
   `--port` to choose.
 - In a linked git worktree the branch becomes a subdomain, such as
