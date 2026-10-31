@@ -16,6 +16,7 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/Uncool-dudes/switchport/internal/daemon"
 	"github.com/Uncool-dudes/switchport/internal/proc"
 	"github.com/Uncool-dudes/switchport/internal/registry"
 	"github.com/Uncool-dudes/switchport/internal/route"
@@ -26,6 +27,7 @@ const (
 	stateDirEnv     = "SWITCHPORT_STATE_DIR"
 	defaultStateDir = ".switchport"
 	defaultTLD      = "localhost"
+	httpsPort       = 443
 	listJSONVersion = 1
 	waitPoll        = 100 * time.Millisecond
 )
@@ -49,8 +51,17 @@ func openRegistry() (*registry.Registry, error) {
 	return registry.Open(dir)
 }
 
+// routeURL includes the port only when the daemon could not take 443.
 func routeURL(name route.Name) string {
-	return "https://" + name.String() + "." + defaultTLD
+	url := "https://" + name.String() + "." + defaultTLD
+	dir, err := stateDir()
+	if err != nil {
+		return url
+	}
+	if s, ok := daemon.ReadStatus(dir); ok && s.Port != httpsPort {
+		return url + ":" + strconv.Itoa(s.Port)
+	}
+	return url
 }
 
 func qualifiedName(prefix, name string) (route.Name, error) {

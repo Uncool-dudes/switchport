@@ -14,6 +14,8 @@ const usage = `usage:
   switchport alias <name> <port> [--force] [--h2c]
   switchport alias --remove <name>
   switchport prune
+  switchport trust [--remove]
+  switchport daemon run|status|stop
   switchport version
 `
 
@@ -52,6 +54,10 @@ func Main(ctx context.Context, version string, args []string, stdout, stderr io.
 		return aliasCommand(args[1:], stdout, stderr)
 	case "prune":
 		return pruneCommand(stdout, stderr)
+	case "trust":
+		return trustCommand(args[1:], stdout, stderr)
+	case "daemon":
+		return daemonCommand(ctx, args[1:], stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "switchport: unknown command %q\n%s", args[0], usage)
 	return exitUsage

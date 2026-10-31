@@ -36,6 +36,7 @@ func TestMain(m *testing.M) {
 	}
 	defer os.RemoveAll(dir)
 	os.Setenv(stateDirEnv, dir)
+	os.Setenv(daemonEnv, daemonDisable)
 	os.Exit(m.Run())
 }
 

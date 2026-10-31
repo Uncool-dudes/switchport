@@ -145,6 +145,9 @@ func runCommand(ctx context.Context, args []string, stderr io.Writer) int {
 			return fail(stderr, fmt.Errorf("%w, use --force to replace it", err))
 		}
 	}
+	if err := ensureDaemon(); err != nil {
+		fmt.Fprintln(stderr, "switchport: no proxy running:", err)
+	}
 	port := opts.port
 	if port == 0 {
 		if port, err = freePort(); err != nil {
