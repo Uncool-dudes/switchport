@@ -43,6 +43,14 @@ func processTable() ([]process, error) {
 	return procs, nil
 }
 
+func startTime(pid int) (string, error) {
+	out, err := exec.Command("ps", "-o", "lstart=", "-p", strconv.Itoa(pid)).Output()
+	if err != nil {
+		return "", fmt.Errorf("ps: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 func parseLsof(out []byte) []Listener {
 	var ls []Listener
 	pid := 0

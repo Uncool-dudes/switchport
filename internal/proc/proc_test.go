@@ -320,15 +320,51 @@ func TestSignalStopsProcessInNewGroup(t *testing.T) {
 	if err := c.tr.Signal(syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
+	waitClosed(t, r.Addr())
+}
+
+func TestSignalRecordedStopsTree(t *testing.T) {
+	port := freePort(t)
+	c := start(t, "new-group", nil, loop4(port))
+	r, err := c.discover(t, freePort(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := c.tr.Snapshot()
+	if err != nil {
+		t.Fatal(err)
+	}
+	SignalRecorded(refs, syscall.SIGTERM)
+	waitClosed(t, r.Addr())
+}
+
+func TestSignalRecordedSkipsReusedPID(t *testing.T) {
+	c := start(t, "sleep", nil)
+	refs, err := c.tr.Snapshot()
+	if err != nil || len(refs) == 0 {
+		t.Fatalf("refs %v, err %v", refs, err)
+	}
+	for i := range refs {
+		refs[i].Started = "some other process"
+	}
+	SignalRecorded(refs, syscall.SIGKILL)
+	time.Sleep(100 * time.Millisecond)
+	if alive, err := c.tr.Alive(); err != nil || !alive {
+		t.Fatalf("alive %v, err %v", alive, err)
+	}
+}
+
+func waitClosed(t *testing.T, addr string) {
+	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for {
-		conn, err := net.DialTimeout("tcp", r.Addr(), 100*time.Millisecond)
+		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
 		if err != nil {
 			return
 		}
 		conn.Close()
 		if time.Now().After(deadline) {
-			t.Fatal("server survived SIGTERM to the tree")
+			t.Fatalf("%s still open", addr)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}

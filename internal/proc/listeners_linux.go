@@ -38,6 +38,24 @@ func processTable() ([]process, error) {
 	return procs, nil
 }
 
+// startTime reads field 22 of /proc/<pid>/stat, in clock ticks since boot.
+func startTime(pid int) (string, error) {
+	stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+	if err != nil {
+		return "", err
+	}
+	i := strings.LastIndexByte(string(stat), ')')
+	if i < 0 {
+		return "", fmt.Errorf("bad stat for pid %d", pid)
+	}
+	f := strings.Fields(string(stat)[i+1:])
+	const startTimeField = 19 // field 22, counted after pid and comm
+	if len(f) <= startTimeField {
+		return "", fmt.Errorf("short stat for pid %d", pid)
+	}
+	return f[startTimeField], nil
+}
+
 // listenersOf matches socket inodes held by pids against /proc/net/tcp{,6}.
 func listenersOf(pids []int) ([]Listener, error) {
 	inodes := map[string]int{}

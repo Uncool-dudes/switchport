@@ -51,3 +51,17 @@ func checkLabel(label string) error {
 }
 
 func (n Name) String() string { return n.value }
+
+// MarshalText implements encoding.TextMarshaler.
+func (n Name) MarshalText() ([]byte, error) { return []byte(n.value), nil }
+
+// UnmarshalText implements encoding.TextUnmarshaler. It validates, so a damaged
+// state file cannot introduce a name that NewName would reject.
+func (n *Name) UnmarshalText(text []byte) error {
+	parsed, err := NewName(string(text))
+	if err != nil {
+		return err
+	}
+	*n = parsed
+	return nil
+}

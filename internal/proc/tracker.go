@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"sync"
 	"syscall"
+
+	"github.com/Uncool-dudes/switchport/internal/route"
 )
 
 // Tracker follows every descendant of a root process. Process groups are not
@@ -86,6 +88,33 @@ func (t *Tracker) Signal(sig syscall.Signal) error {
 		_ = syscall.Kill(pid, sig)
 	}
 	return nil
+}
+
+// Snapshot records the live tree so it can be stopped by a later process.
+func (t *Tracker) Snapshot() ([]route.Process, error) {
+	pids, err := t.refresh()
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]route.Process, 0, len(pids))
+	for _, pid := range pids {
+		if started, err := startTime(pid); err == nil {
+			refs = append(refs, route.Process{PID: pid, Started: started})
+		}
+	}
+	return refs, nil
+}
+
+// SignalRecorded signals processes from an earlier Snapshot. A saved pid may
+// since belong to an unrelated process, so one whose start time differs is
+// skipped.
+func SignalRecorded(refs []route.Process, sig syscall.Signal) {
+	for _, ref := range refs {
+		if started, err := startTime(ref.PID); err == nil && started == ref.Started {
+			// A process may exit between the check and the signal.
+			_ = syscall.Kill(ref.PID, sig)
+		}
+	}
 }
 
 // Listener is a TCP socket in LISTEN state owned by a tracked process.
