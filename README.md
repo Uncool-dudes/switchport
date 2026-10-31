@@ -73,6 +73,19 @@ switchport uninstall
 
 `API_URL=$(switchport get api --wait 10s)` finds a service from a script.
 
+## Moving an app to a switchport URL
+
+`SWITCHPORT_URL` is the origin clients should use for the app. When switching from a
+direct localhost URL, check the app's own origin-dependent settings:
+
+- Cookies restricted to the old host or domain will not be sent to the new host. Update
+  the app's cookie configuration for the switchport URL.
+- Register the new callback URL with the OAuth provider and update any redirect URI
+  allowlist in the app.
+- Add the switchport origin to the backend's CORS allowlist.
+- Disable or update dev-server auto-open settings (for example, Vite's `server.open`)
+  so the browser opens `SWITCHPORT_URL` instead of the old localhost URL.
+
 ## Custom TLDs
 
 `.localhost` needs no DNS setup on macOS 26 and in browsers. Run `switchport
