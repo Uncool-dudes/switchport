@@ -14,12 +14,34 @@ servers that ignore `PORT` work too.
 
 ## Install
 
+Nix flakes are the only supported install for now, on Apple silicon macOS and
+Linux. Nixpkgs no longer builds for Intel Macs.
+
 ```sh
-nix profile install github:Uncool-dudes/switchport
+nix profile add github:Uncool-dudes/switchport
+switchport setup
 ```
 
-or `go install github.com/Uncool-dudes/switchport/cmd/switchport@latest`. The
-flake also provides `overlays.default` and a dev shell.
+Older Nix calls this `nix profile install`. To try it first, use `nix run
+github:Uncool-dudes/switchport -- doctor`.
+
+In a flake configuration, such as home-manager or NixOS:
+
+```nix
+{
+  inputs.switchport.url = "github:Uncool-dudes/switchport";
+
+  # then, in a module
+  nixpkgs.overlays = [ inputs.switchport.overlays.default ];
+  home.packages = [ pkgs.switchport ];
+}
+```
+
+The package needs Go 1.26, so don't make its `nixpkgs` input follow an older
+channel.
+
+After upgrading, run `switchport daemon stop` so the next command starts the
+new daemon.
 
 ## Usage
 
@@ -45,6 +67,8 @@ switchport uninstall
   and `REQUESTS_CA_BUNDLE` unless already set, so they can call each other over
   HTTPS.
 - gRPC works with no flag. `--h2c` forces HTTP/2 cleartext to other backends.
+- Backends that serve HTTPS themselves are detected, and their certificates are
+  not verified, since backends are always on loopback.
 - `prune` stops commands left running after their wrapper was killed.
 
 `API_URL=$(switchport get api --wait 10s)` finds a service from a script.
@@ -74,7 +98,7 @@ TLDs passes through unchanged, so dev servers still refuse it.
 switchport service install
 ```
 
-With home-manager on macOS, use a launchd agent:
+With home-manager on macOS, use a launchd agent, with the overlay above:
 
 ```nix
 launchd.agents.switchport = {
@@ -88,8 +112,31 @@ launchd.agents.switchport = {
 ```
 
 The daemon never runs as root. macOS allows an unprivileged :443 only on a
-wildcard address, so it binds one and closes non-loopback peers before TLS. On
-Linux, give the binary `cap_net_bind_service`, or it falls back to port 8443.
+wildcard address, so it binds one and closes non-loopback peers before TLS.
+
+On Linux it falls back to port 8443, because capabilities cannot be set on a
+binary in the Nix store. To use 443, allow it system-wide:
+
+```sh
+sudo sysctl net.ipv4.ip_unprivileged_port_start=443
+```
+
+On NixOS, set `boot.kernel.sysctl."net.ipv4.ip_unprivileged_port_start" = 443`.
+
+## NixOS
+
+`switchport setup` cannot change the system trust store on NixOS. Copy the
+public certificate next to your configuration and declare it:
+
+```nix
+security.pki.certificateFiles = [ ./switchport-ca.pem ];
+```
+
+```sh
+cp ~/.switchport/ca.pem switchport-ca.pem
+```
+
+The certificate is safe to commit. The key stays in `~/.switchport`.
 
 Docker containers do not run under `switchport run`. Publish a port and use
 `switchport alias db 5432`.
@@ -97,3 +144,12 @@ Docker containers do not run under `switchport run`. Publish a port and use
 State lives in `~/.switchport`, or `SWITCHPORT_STATE_DIR`.
 
 See [SPEC.md](SPEC.md) for the design and `spike/` for the experiments behind it.
+
+## Status
+
+Early. Used on macOS 26, and tested on Debian. NixOS and other Linux
+distributions are untested.
+
+## License
+
+MIT
