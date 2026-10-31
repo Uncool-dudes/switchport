@@ -1,7 +1,8 @@
 # Roadmap
 
 Where switchport is going. These are plans, not commitments, and order may
-change. Design detail lives in [SPEC.md](SPEC.md).
+change. Design detail lives in [SPEC.md](SPEC.md), and each item below is tracked
+in [GitHub Issues](https://github.com/Uncool-dudes/switchport/issues).
 
 ## Now: harden v0.1
 
@@ -21,6 +22,8 @@ Known issues:
   name. Not yet reproduced.
 - A plain server that never answers the TLS probe holds its first request for up
   to 3 seconds.
+- TLS backends that require client certificates are untested.
+- Restarting the daemon drops open WebSockets, including hot reload.
 
 Still to validate:
 
@@ -31,7 +34,12 @@ Still to validate:
 - NixOS, older macOS, and Linux with systemd-resolved.
 - Behavior across sleep, wake, and VPN changes.
 
-`internal/trust` also has no unit tests.
+Also to do:
+
+- Unit tests for `internal/trust`.
+- Docs for moving an app onto a switchport URL: cookies, OAuth redirect URIs,
+  CORS allowlists, and dev server settings that open the old URL.
+- Docs for fixed-port dev servers across worktrees.
 
 ## Next: v0.2
 
@@ -51,6 +59,8 @@ To settle before v0.2:
   forwards from the laptop.
 - Signed and notarized macOS binaries.
 - Install options beyond Nix: Homebrew, `go install`, and an npm wrapper.
+- Whether ports stay stable per name across restarts.
+- Whether the config format can match portless closely enough to ease migration.
 
 ## Later
 
