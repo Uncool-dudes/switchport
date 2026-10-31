@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -35,5 +37,27 @@ func TestDoctorReportsEachFailureWithFix(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("missing %q in %q", want, out)
 		}
+	}
+}
+
+func TestDoctorReportsTakenPort(t *testing.T) {
+	freshState(t)
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	port := strconv.Itoa(ln.Addr().(*net.TCPAddr).Port)
+	t.Setenv(httpsPortEnv, port)
+
+	_, out, _ := cli(t, "doctor")
+	if !strings.Contains(out, "FAIL  HTTPS port "+port) {
+		t.Errorf("taken port not reported:\n%s", out)
+	}
+
+	ln.Close()
+	_, out, _ = cli(t, "doctor")
+	if !strings.Contains(out, "ok    HTTPS port "+port) {
+		t.Errorf("free port reported as taken:\n%s", out)
 	}
 }

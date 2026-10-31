@@ -90,6 +90,9 @@ func runChecks(ctx context.Context, dir string) []check {
 	checks := []check{checkRegistry(dir)}
 	caPath := filepath.Join(dir, caFile)
 	checks = append(checks, checkCA(caPath), checkDaemon(dir))
+	if _, up := daemon.ReadStatus(dir); !up {
+		checks = append(checks, checkPort(ctx))
+	}
 	for _, tld := range tlds() {
 		checks = append(checks, checkResolution(ctx, tld))
 	}
@@ -130,6 +133,33 @@ func checkDaemon(dir string) check {
 		return c
 	}
 	c.name = "daemon, port " + strconv.Itoa(s.Port)
+	return c
+}
+
+// checkPort dials instead of binding: a wildcard bind on macOS can raise a
+// firewall prompt, and doctor must change nothing.
+func checkPort(ctx context.Context) check {
+	c := check{name: "HTTPS port"}
+	port, err := configuredPort()
+	if err != nil {
+		c.err = err
+		c.fix = "unset " + httpsPortEnv
+		return c
+	}
+	c.name = "HTTPS port " + strconv.Itoa(port)
+	c.fix = "stop what holds it, or set " + httpsPortEnv
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	var d net.Dialer
+	for _, host := range []string{"127.0.0.1", "::1"} {
+		conn, err := d.DialContext(ctx, "tcp", net.JoinHostPort(host, strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		conn.Close()
+		c.err = fmt.Errorf("something else is listening on %s", host)
+		return c
+	}
 	return c
 }
 
