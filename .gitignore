@@ -1,0 +1,5 @@
+/devroute
+/dist/
+*.test
+*.out
+result
