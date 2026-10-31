@@ -117,6 +117,16 @@ func SignalRecorded(refs []route.Process, sig syscall.Signal) {
 	}
 }
 
+// RecordedAlive reports whether any process from a Snapshot is still running.
+func RecordedAlive(refs []route.Process) bool {
+	for _, ref := range refs {
+		if started, err := startTime(ref.PID); err == nil && started == ref.Started {
+			return true
+		}
+	}
+	return false
+}
+
 // Listener is a TCP socket in LISTEN state owned by a tracked process.
 type Listener struct {
 	PID  int
