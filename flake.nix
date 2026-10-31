@@ -1,5 +1,5 @@
 {
-  description = "devroute: named HTTPS URLs for any local dev server";
+  description = "switchport: named HTTPS URLs for any local dev server";
 
   inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
 
@@ -16,14 +16,14 @@
     in
     {
       packages = forAllSystems (pkgs: rec {
-        devroute = pkgs.callPackage ./nix/package.nix {
+        switchport = pkgs.callPackage ./nix/package.nix {
           version = self.shortRev or self.dirtyShortRev or "dev";
         };
-        default = devroute;
+        default = switchport;
       });
 
       overlays.default = final: _prev: {
-        devroute = final.callPackage ./nix/package.nix {
+        switchport = final.callPackage ./nix/package.nix {
           version = self.shortRev or self.dirtyShortRev or "dev";
         };
       };

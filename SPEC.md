@@ -1,18 +1,18 @@
-# devroute spec
+# switchport spec
 
-Named HTTPS URLs for any local dev server, in any language, from one binary. `devroute` is a placeholder name.
+Named HTTPS URLs for any local dev server, in any language, from one binary.
 
 Status: draft, 2026-10-31. Not implemented. Spikes for the proxy and port observation live in `spike/` (see Appendix A).
 
 ## Summary
 
-`devroute run api -- go run ./cmd/api` gives the process a free port and a stable URL at `https://api.localhost`. Nobody picks or remembers a port. Other processes find it by name, in a browser, in `curl`, or from Go or Python code.
+`switchport run api -- go run ./cmd/api` gives the process a free port and a stable URL at `https://api.localhost`. Nobody picks or remembers a port. Other processes find it by name, in a browser, in `curl`, or from Go or Python code.
 
 ## Positioning
 
-The direct comparison is [portless](https://github.com/vercel-labs/portless) (0.15.13 as of this draft). It is capable and well known, and it leads with the JavaScript audience. Competing for that audience head-on is not the plan. devroute targets polyglot and backend stacks, which portless serves least well.
+The direct comparison is [portless](https://github.com/vercel-labs/portless) (0.15.13 as of this draft). It is capable and well known, and it leads with the JavaScript audience. Competing for that audience head-on is not the plan. switchport targets polyglot and backend stacks, which portless serves least well.
 
-| | portless 0.15.13 | devroute target |
+| | portless 0.15.13 | switchport target |
 | --- | --- | --- |
 | Runtime | Node 24+ | Single static binary |
 | Framework knowledge | Injects flags per framework | None in core |
@@ -37,8 +37,8 @@ portless entries marked "not found" come from reading its core source files, not
 
 ## Glossary
 
-- **App**: a process tree started by `devroute`, with a name and a port.
-- **Alias**: a static route to a port `devroute` did not start. Persists until removed.
+- **App**: a process tree started by `switchport`, with a name and a port.
+- **Alias**: a static route to a port `switchport` did not start. Persists until removed.
 - **Route**: a mapping from a hostname to a backend address. Owned by one app or alias.
 - **Registry**: the persistent set of routes.
 - **Daemon**: the long-running user process that holds the proxy and the DNS responder.
@@ -65,7 +65,7 @@ Deferred:
 
 - Windows support.
 - Public tunnels (ngrok, Cloudflare).
-- Workspace discovery for Turborepo, pnpm, or Nx. These work today without integration, because each package's `dev` script can call `devroute run` and the monorepo tool runs those scripts as usual.
+- Workspace discovery for Turborepo, pnpm, or Nx. These work today without integration, because each package's `dev` script can call `switchport run` and the monorepo tool runs those scripts as usual.
 - Framework presets. If added later they are data, a name mapped to a command template, with no framework logic in code.
 
 Rejected:
@@ -81,38 +81,38 @@ Source names the tool a feature comes from. "Unverified" marks behavior known on
 
 **Run wrapper** (portless)
 
-- `devroute run <name> -- <command>` assigns a port, registers a route, starts the child, and removes the route on exit.
+- `switchport run <name> -- <command>` assigns a port, registers a route, starts the child, and removes the route on exit.
 - The wrapper tracks the whole process tree, not a process group. `pnpm` starts its child in a new group, so a group kill leaves the server running.
 - Signals go to every tracked process, children first.
 - With a terminal attached, the child gets the foreground (`SysProcAttr.Foreground`). Without it, a child in a new group hangs when it reads stdin.
 - If `<name>` is omitted, it comes from the directory name.
-- Acceptance: after Ctrl+C on `devroute run api -- go run ./cmd/api`, the route is gone and no descendant process remains.
+- Acceptance: after Ctrl+C on `switchport run api -- go run ./cmd/api`, the route is gone and no descendant process remains.
 
 **Port contract** (D5)
 
 - Set `PORT` in the child env, substitute `{port}` in the command, and observe listening sockets as a fallback.
-- Acceptance: Vite, Next.js, Astro, Flask, Django, and uvicorn are each reachable with no framework-specific code in devroute. Passed in the spike.
+- Acceptance: Vite, Next.js, Astro, Flask, Django, and uvicorn are each reachable with no framework-specific code in switchport. Passed in the spike.
 
 **Child environment** (portless, extended)
 
-- Inject `PORT`, `DEVROUTE_URL`, and the CA path through `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE`.
+- Inject `PORT`, `SWITCHPORT_URL`, and the CA path through `NODE_EXTRA_CA_CERTS`, `SSL_CERT_FILE`, and `REQUESTS_CA_BUNDLE`.
 - Never override a value the user already set.
 - Acceptance: a Node or Python child calling another app by its `https://` URL needs no manual TLS setup.
 
 **Service URL lookup** (portless `get`)
 
-- `devroute get <name>` prints a URL, applying the worktree prefix when in a linked worktree. `--no-worktree` skips it.
+- `switchport get <name>` prints a URL, applying the worktree prefix when in a linked worktree. `--no-worktree` skips it.
 - A prefixed lookup falls back to the main-checkout route when the worktree has no such app, and the output says so on stderr.
 - `--wait <duration>` blocks until the route exists, for startup ordering.
 
 **Aliases** (portless `alias`)
 
-- `devroute alias <name> <port>` adds a static route. `--remove` deletes it. `--force` replaces an existing route.
+- `switchport alias <name> <port>` adds a static route. `--remove` deletes it. `--force` replaces an existing route.
 - Acceptance: an alias survives a reboot and a daemon restart.
 
 **Listing** (portless `list`)
 
-- `devroute list` shows name, URL, backend, PID, type, and worktree. `--json` is stable and versioned.
+- `switchport list` shows name, URL, backend, PID, type, and worktree. `--json` is stable and versioned.
 
 **Worktree prefix** (portless)
 
@@ -153,17 +153,17 @@ Source names the tool a feature comes from. "Unverified" marks behavior known on
 **Stale route cleanup** (portless)
 
 - Each app route records the root PID and known descendants. Reads drop routes whose processes are all dead.
-- `devroute prune` stops orphaned process trees and removes their routes.
+- `switchport prune` stops orphaned process trees and removes their routes.
 
 **Setup and teardown** (puma-dev, portless)
 
-- `devroute setup` does CA trust in one guided step, plus the resolver file only when a custom TLD is used. Each privileged step is shown before it runs.
-- `devroute uninstall` removes the CA from the keychain, the resolver file, the service, and the state directory.
+- `switchport setup` does CA trust in one guided step, plus the resolver file only when a custom TLD is used. Each privileged step is shown before it runs.
+- `switchport uninstall` removes the CA from the keychain, the resolver file, the service, and the state directory.
 - Acceptance: uninstall leaves no trace.
 
 **Diagnostics** (portless `doctor`, localias `debug config`)
 
-- `devroute doctor` is read-only. It checks the daemon, routes, name resolution through the system resolver, CA trust, and port binding, and prints a fix for each failure.
+- `switchport doctor` is read-only. It checks the daemon, routes, name resolution through the system resolver, CA trust, and port binding, and prints a fix for each failure.
 - `dig` ignores `/etc/resolver`, so it must not be used for this check.
 
 **Platforms**
@@ -175,19 +175,19 @@ Source names the tool a feature comes from. "Unverified" marks behavior known on
 **Docker and Compose** (portless top request)
 
 - Containers cannot use port observation: in the spike, a `docker run -p` listener is not in the CLI's process tree. Docker needs this separate path.
-- The daemon watches Docker for containers with a `devroute.name` label and creates routes from their published ports. It uses the Docker Engine API over the socket through `net/http`, so no SDK dependency is needed.
+- The daemon watches Docker for containers with a `switchport.name` label and creates routes from their published ports. It uses the Docker Engine API over the socket through `net/http`, so no SDK dependency is needed.
 - Works with Docker Desktop, OrbStack, and Colima, or `doctor` says why not.
 - Containers calling host apps are a separate problem; see Open questions.
 
 **Project config** (localias, portless)
 
 - A committed file declares app names, commands, and ports.
-- Lookup order: `--config`, env var, current directory, git root, XDG path. `devroute config` prints the active path.
+- Lookup order: `--config`, env var, current directory, git root, XDG path. `switchport config` prints the active path.
 - Commands in a repo file are never run until approved, like `direnv allow`, because a cloned repo could otherwise execute code on an incoming request.
 
 **Stack start** (hotel, informed)
 
-- `devroute up` starts apps from project config and merges logs. `devroute logs <name>` follows one.
+- `switchport up` starts apps from project config and merges logs. `switchport logs <name>` follows one.
 - Scope check first: `process-compose` and `overmind` already do this. Prefer a thin layer.
 
 **Start on first request and idle stop** (hotel, puma-dev; unverified)
@@ -198,7 +198,7 @@ Source names the tool a feature comes from. "Unverified" marks behavior known on
 
 **Dashboard** (hotel, portless open request)
 
-- `https://devroute.localhost` shows routes, status, and logs.
+- `https://switchport.localhost` shows routes, status, and logs.
 
 ### Later
 
@@ -236,7 +236,7 @@ The default TLD is `localhost`, because framework host checks decide this. Teste
 
 - `.localhost` works with no config in every server tested.
 - On macOS 26.2, `*.localhost` resolves to `::1` and `127.0.0.1` from libc `getaddrinfo`, `dscacheutil`, Python, Node, and Go with and without cgo. No hosts entry or resolver file is involved, and `a.b.localhost` works, so wildcards need no setup.
-- `/etc/resolver/localhost` is pointless there: `scutil --dns` lists it, but no query reaches the configured server. mDNSResponder answers `.localhost` itself. So the OS, not devroute, owns those answers.
+- `/etc/resolver/localhost` is pointless there: `scutil --dns` lists it, but no query reaches the configured server. mDNSResponder answers `.localhost` itself. So the OS, not switchport, owns those answers.
 - Embedded DNS is needed only for custom TLDs. With `/etc/resolver/<tld>`, every runtime above resolved through it.
 - Older macOS releases and Linux distributions are unverified. `doctor` must detect a failing `.localhost` lookup and suggest a custom TLD.
 - Clients may try `::1` first, so the proxy must serve both IPv4 and IPv6 loopback.
@@ -261,7 +261,7 @@ The default TLD is `localhost`, because framework host checks decide this. Teste
 ### D5. Port contract (spiked)
 
 1. **`PORT` env**: always set.
-2. **`{port}` placeholder**: any occurrence in the command is replaced. Example: `devroute run web -- vite --port {port}`.
+2. **`{port}` placeholder**: any occurrence in the command is replaced. Example: `switchport run web -- vite --port {port}`.
 3. **Observation**: runs alongside from the start, with no timeout to wait through. It watches the process tree's listening sockets. The assigned port wins at once. Otherwise it waits a short settle window, then picks the first listener that answers HTTP.
 
 The route uses the observed address, because Vite and Astro bound only `[::1]` in the spike.
@@ -282,7 +282,7 @@ Known limits:
 
 ### D6. Spawning: only with approval
 
-- `devroute run` spawns from the user's shell.
+- `switchport run` spawns from the user's shell.
 - The daemon spawns only for on-demand start, only from approved config.
 
 ### D7. Host and Origin handling (leaning)
@@ -309,7 +309,6 @@ Known limits:
 
 Must answer before finalizing:
 
-- Name. Check npm, Homebrew, GitHub, and the domain for collisions.
 - License.
 - Should `run` start the daemon automatically, or require `setup` first? portless auto-starts, and the first-run experience is the main comparison.
 - Should ports be stable per name across restarts? Stable ports help tools that cache them. Random ports expose hidden dependencies.

@@ -4,14 +4,14 @@
   version,
 }:
 buildGoModule {
-  pname = "devroute";
+  pname = "switchport";
   inherit version;
 
   src = lib.cleanSource ../.;
 
   vendorHash = null;
 
-  subPackages = [ "cmd/devroute" ];
+  subPackages = [ "cmd/switchport" ];
 
   ldflags = [
     "-s"
@@ -21,7 +21,7 @@ buildGoModule {
 
   meta = {
     description = "Named HTTPS URLs for any local dev server";
-    mainProgram = "devroute";
+    mainProgram = "switchport";
     platforms = lib.platforms.unix;
   };
 }
