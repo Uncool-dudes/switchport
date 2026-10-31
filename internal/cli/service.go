@@ -6,8 +6,12 @@ import (
 	"io"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 )
+
+const nixStore = "/nix/store/"
 
 func serviceCommand(args []string, stdout, stderr io.Writer) int {
 	if len(args) != 1 {
@@ -46,11 +50,21 @@ func installService() (string, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return "", err
 	}
-	def := serviceDefinition(exe, filepath.Join(dir, "daemon.log"))
+	onPath, _ := exec.LookPath("switchport") // not on PATH leaves exe as it is
+	def := serviceDefinition(stableExecutable(exe, onPath), filepath.Join(dir, "daemon.log"))
 	if err := os.WriteFile(path, []byte(def), 0o644); err != nil {
 		return "", err
 	}
 	return path, loadService(path)
+}
+
+// stableExecutable keeps a service off a Nix store path, which stops existing
+// when an upgrade is garbage collected. A profile path on PATH survives that.
+func stableExecutable(exe, onPath string) string {
+	if strings.HasPrefix(exe, nixStore) && onPath != "" && !strings.HasPrefix(onPath, nixStore) {
+		return onPath
+	}
+	return exe
 }
 
 // removeService succeeds when there is nothing to remove.
