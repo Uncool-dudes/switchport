@@ -2,7 +2,7 @@
 
 Named HTTPS URLs for any local dev server, in any language, from one binary.
 
-Status: draft, 2026-10-31. Not implemented. Spikes for the proxy and port observation live in `spike/` (see Appendix A).
+Status: v0.1 core implemented on macOS and Linux, with the checks under "Validation before v0.1" still open. Spikes live in `spike/` (see Appendix A).
 
 ## Summary
 
@@ -325,15 +325,17 @@ Should answer before v0.2:
 
 ## Validation before v0.1
 
-- `.localhost` resolution on older supported macOS releases and on Linux.
-- The Origin filter from D7, with a test that a foreign `Origin` is still refused.
-- HMR in real Chrome, Safari, and Firefox. The spike used real handshakes and received real server frames, but no browser ran.
-- `grpc-go` client through the proxy, including bidirectional streaming.
-- Keychain install of the CA, then browser trust, including Firefox. Confirm macOS accepts a name constraint on `localhost`; the spike only checked `test`.
-- Automatic h2c selection on `Content-Type: application/grpc`.
+Done: the Origin filter (Next.js refuses a foreign `Origin` through the proxy, and Vite refuses a WebSocket without its token whatever the origin), `grpc-go` bidirectional streaming through the daemon (25 full-duplex round trips, in `spike/grpccheck`), automatic h2c selection, name constraint on `localhost` under `security verify-cert`, the Linux trust store on Debian, and Node and Python children calling sibling HTTPS URLs.
+
+Open, all needing a person or a machine this work did not have:
+
+- `switchport setup` on macOS, which needs a keychain approval. Then browser trust, including Firefox and whether it needs enterprise roots.
+- HMR in real Chrome, Safari, and Firefox. Handshakes and frames are tested, but no browser has run.
+- The real :443 bind, including macOS firewall behavior with an unsigned binary. All tests used high ports.
+- `switchport service install` on macOS and Linux. The definitions are written but not loaded by any test.
+- `.localhost` on older macOS. On Linux, glibc did not resolve `x.localhost` in a Debian bookworm container without systemd-resolved, while `curl` handles it itself. Check systemd-resolved hosts, and consider a default that works without it.
+- `/etc/resolver/<tld>` through `setup --tld`. The mechanism was proven by hand, but the command needs root.
 - Backends served over TLS.
-- Proxy tests on Linux. Observation has run there; the proxy suite has not.
-- Replace `ps` plus `lsof` on macOS with something cheaper, if polling cost matters in practice.
 
 ## Appendix A: Spike results
 
@@ -366,6 +368,8 @@ Framework versions: Vite 8.3.5, Next.js 16.4.3, Astro 7.4.4, Django 6.1.2.
 
 ### Findings that changed the design
 
+- A saved pid can be reused by an unrelated process, so `prune` compares the recorded start time before signaling.
+- `dig` and the system resolver differ on `.localhost`, and Debian containers without systemd-resolved do not resolve it at all.
 - macOS 26.2 resolves `*.localhost` itself, so the default path needs neither DNS nor root.
 - `pnpm` runs its child in a new process group, so group-based lookup and kill both fail. Track the process tree.
 - Vite, Astro, Django, and Next.js refuse `.test` in some way. This changed the default TLD and added D7.
