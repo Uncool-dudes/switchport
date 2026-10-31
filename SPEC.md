@@ -335,7 +335,6 @@ Open, all needing a person or a machine this work did not have:
 - `switchport service install` on macOS and Linux. The definitions are written but not loaded by any test.
 - `.localhost` on older macOS. On Linux, glibc did not resolve `x.localhost` in a Debian bookworm container without systemd-resolved, while `curl` handles it itself. Check systemd-resolved hosts, and consider a default that works without it.
 - `/etc/resolver/<tld>` through `setup --tld`. The mechanism was proven by hand, but the command needs root.
-- Backends served over TLS.
 
 ## Appendix A: Spike results
 

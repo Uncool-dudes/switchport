@@ -3,6 +3,7 @@ package proxy
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,6 +22,7 @@ const (
 	localhostTLD  = "localhost"
 	holdRetryWait = 50 * time.Millisecond
 	grpcType      = "application/grpc"
+	tlsProbeWait  = 3 * time.Second
 )
 
 // Backend is where a hostname's requests go.
@@ -45,21 +48,37 @@ func New(lookup Lookup, o Options) http.Handler {
 	h2c.SetUnencryptedHTTP2(true)
 	p := &handler{lookup: lookup, opts: o}
 	// One transport cannot do both: with HTTP/1 enabled, http:// never uses h2c.
-	p.http1 = &httputil.ReverseProxy{Rewrite: p.rewrite, Transport: &http.Transport{}, ErrorHandler: backendError}
-	p.h2c = &httputil.ReverseProxy{Rewrite: p.rewrite, Transport: &http.Transport{Protocols: h2c}, ErrorHandler: backendError}
+	p.http1 = p.reverseProxy(&http.Transport{})
+	p.h2c = p.reverseProxy(&http.Transport{Protocols: h2c})
+	// Without ForceAttemptHTTP2 this offers only HTTP/1.1, which WebSocket
+	// upgrades need. Only gRPC gets the HTTP/2 transport.
+	p.tls = p.reverseProxy(&http.Transport{TLSClientConfig: backendTLS()})
+	p.tlsH2 = p.reverseProxy(&http.Transport{TLSClientConfig: backendTLS(), ForceAttemptHTTP2: true})
 	return p
 }
 
+// backendTLS skips verification because backends are always loopback addresses
+// and dev servers present self-signed certificates.
+func backendTLS() *tls.Config {
+	return &tls.Config{InsecureSkipVerify: true}
+}
+
+func (p *handler) reverseProxy(t *http.Transport) *httputil.ReverseProxy {
+	return &httputil.ReverseProxy{Rewrite: p.rewrite, Transport: t, ModifyResponse: p.checkScheme, ErrorHandler: p.backendError}
+}
+
 type handler struct {
-	lookup     Lookup
-	opts       Options
-	http1, h2c *httputil.ReverseProxy
+	lookup                 Lookup
+	opts                   Options
+	http1, h2c, tls, tlsH2 *httputil.ReverseProxy
+	schemes                sync.Map // addr to speaksTLS result
 }
 
 type targetKey struct{}
 
 type target struct {
 	backend     Backend
+	secure      bool
 	rewriteHost bool
 }
 
@@ -79,13 +98,60 @@ func (p *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p.waitReady(r.Context(), backend.Addr)
-	t := target{backend: backend, rewriteHost: !strings.HasSuffix(host, "."+localhostTLD)}
+	secure := !backend.H2C && p.backendUsesTLS(r.Context(), backend.Addr)
+	t := target{backend: backend, secure: secure, rewriteHost: !strings.HasSuffix(host, "."+localhostTLD)}
 	r = r.WithContext(context.WithValue(r.Context(), targetKey{}, t))
-	if backend.H2C || strings.HasPrefix(r.Header.Get("Content-Type"), grpcType) {
+	grpc := strings.HasPrefix(r.Header.Get("Content-Type"), grpcType)
+	switch {
+	case secure && grpc:
+		p.tlsH2.ServeHTTP(w, r)
+	case secure:
+		p.tls.ServeHTTP(w, r)
+	case backend.H2C || grpc:
 		p.h2c.ServeHTTP(w, r)
-		return
+	default:
+		p.http1.ServeHTTP(w, r)
 	}
-	p.http1.ServeHTTP(w, r)
+}
+
+// backendUsesTLS asks each address once, because the probe is not free: plain
+// servers log it as a bad request, and a request waits for it. checkScheme and
+// backendError forget the answer when it may have gone stale.
+func (p *handler) backendUsesTLS(ctx context.Context, addr string) bool {
+	if known, ok := p.schemes.Load(addr); ok {
+		return known.(bool)
+	}
+	secure, answered := speaksTLS(ctx, addr)
+	if answered {
+		p.schemes.Store(addr, secure)
+	}
+	return secure
+}
+
+// speaksTLS tries a handshake, the only signal available: on a new connection
+// the client talks first, so a server reveals nothing until then. The wait is
+// long because a dev server can block its event loop for seconds, and giving up
+// on a TLS backend turns into a 502. answered is false when nothing listened.
+func speaksTLS(ctx context.Context, addr string) (secure, answered bool) {
+	ctx, cancel := context.WithTimeout(ctx, tlsProbeWait)
+	defer cancel()
+	var d net.Dialer
+	conn, err := d.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return false, false
+	}
+	defer conn.Close()
+	return tls.Client(conn, backendTLS()).HandshakeContext(ctx) == nil, true
+}
+
+// checkScheme catches a TLS server that took over a port: it can answer plain
+// HTTP with a valid 400, so no transport error reaches backendError.
+func (p *handler) checkScheme(res *http.Response) error {
+	t := res.Request.Context().Value(targetKey{}).(target)
+	if !t.secure && res.StatusCode == http.StatusBadRequest {
+		p.schemes.Delete(t.backend.Addr)
+	}
+	return nil
 }
 
 func (p *handler) routes() []string {
@@ -132,16 +198,23 @@ func (p *handler) waitReady(ctx context.Context, addr string) {
 	}
 }
 
+func (t target) scheme() string {
+	if t.secure {
+		return "https"
+	}
+	return "http"
+}
+
 func (p *handler) rewrite(r *httputil.ProxyRequest) {
 	t := r.In.Context().Value(targetKey{}).(target)
-	r.Out.URL.Scheme = "http"
+	r.Out.URL.Scheme = t.scheme()
 	r.Out.URL.Host = t.backend.Addr
 	r.Out.Host = r.In.Host
 	r.SetXForwarded()
 	r.Out.Header.Set("X-Forwarded-Port", p.opts.Port)
 	r.Out.Header.Set(loopHeader, "1")
 	if t.rewriteHost {
-		p.rewriteForHostChecks(r, t.backend.Addr)
+		p.rewriteForHostChecks(r, t)
 	}
 }
 
@@ -149,8 +222,8 @@ func (p *handler) rewrite(r *httputil.ProxyRequest) {
 // hostnames they do not know. Those checks stop malicious pages reaching dev
 // servers, so an Origin outside our own TLDs passes through unchanged and the
 // backend still refuses it.
-func (p *handler) rewriteForHostChecks(r *httputil.ProxyRequest, addr string) {
-	_, port, err := net.SplitHostPort(addr)
+func (p *handler) rewriteForHostChecks(r *httputil.ProxyRequest, t target) {
+	_, port, err := net.SplitHostPort(t.backend.Addr)
 	if err != nil {
 		return
 	}
@@ -161,13 +234,16 @@ func (p *handler) rewriteForHostChecks(r *httputil.ProxyRequest, addr string) {
 		return
 	}
 	if u, err := url.Parse(origin); err == nil && p.owns(hostname(u.Host)) {
-		r.Out.Header.Set("Origin", "http://"+local)
+		r.Out.Header.Set("Origin", t.scheme()+"://"+local)
 	}
 }
 
-func backendError(w http.ResponseWriter, r *http.Request, err error) {
+func (p *handler) backendError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, context.Canceled) {
 		return
+	}
+	if t, ok := r.Context().Value(targetKey{}).(target); ok {
+		p.schemes.Delete(t.backend.Addr)
 	}
 	writeError(w, r, http.StatusBadGateway, "bad_gateway", nil)
 }

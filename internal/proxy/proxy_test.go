@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -42,7 +43,10 @@ func newFixture(t *testing.T, hold time.Duration) *fixture {
 	})
 	f.front = httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h.ServeHTTP(w, r)
-		f.handled <- struct{}{}
+		select {
+		case f.handled <- struct{}{}:
+		default: // only tests waiting on one request read this
+		}
 	}))
 	f.front.EnableHTTP2 = true
 	f.front.StartTLS()
@@ -203,26 +207,27 @@ func TestErrorResponses(t *testing.T) {
 	}
 }
 
-func TestRelaysWebSocketOverHTTP1(t *testing.T) {
-	f := newFixture(t, 0)
-	f.backend(t, "ws.localhost", func(w http.ResponseWriter, r *http.Request) {
-		conn, brw, err := http.NewResponseController(w).Hijack()
-		if err != nil {
-			return
-		}
-		defer conn.Close()
-		fmt.Fprint(brw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
-		brw.Flush()
-		line, _ := brw.ReadString('\n')
-		fmt.Fprint(brw, "echo:"+line+"push\n")
-		brw.Flush()
-	})
+func wsEcho(w http.ResponseWriter, r *http.Request) {
+	conn, brw, err := http.NewResponseController(w).Hijack()
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+	fmt.Fprint(brw, "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+	brw.Flush()
+	line, _ := brw.ReadString('\n')
+	fmt.Fprint(brw, "echo:"+line+"push\n")
+	brw.Flush()
+}
+
+func (f *fixture) checkWebSocket(t *testing.T, host string) {
+	t.Helper()
 	conn, err := tls.Dial("tcp", f.front.Listener.Addr().String(), &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer conn.Close()
-	fmt.Fprint(conn, "GET / HTTP/1.1\r\nHost: ws.localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n")
+	fmt.Fprintf(conn, "GET / HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n", host)
 	br := bufio.NewReader(conn)
 	res, err := http.ReadResponse(br, nil)
 	if err != nil {
@@ -238,6 +243,12 @@ func TestRelaysWebSocketOverHTTP1(t *testing.T) {
 			t.Fatalf("got %q, want %q", got, want)
 		}
 	}
+}
+
+func TestRelaysWebSocketOverHTTP1(t *testing.T) {
+	f := newFixture(t, 0)
+	f.backend(t, "ws.localhost", wsEcho)
+	f.checkWebSocket(t, "ws.localhost")
 }
 
 func TestStreamsServerSentEvents(t *testing.T) {
@@ -382,5 +393,151 @@ func TestDialsObservedIPv6Address(t *testing.T) {
 	e := f.echoed(t, f.request("GET", "v6.test", nil))
 	if want := "localhost:" + strconv.Itoa(ln.Addr().(*net.TCPAddr).Port); e.Host != want {
 		t.Fatalf("host %q, want %q", e.Host, want)
+	}
+}
+
+func (f *fixture) tlsBackend(t *testing.T, host string, h http.HandlerFunc) {
+	t.Helper()
+	s := httptest.NewUnstartedServer(h)
+	s.EnableHTTP2 = true
+	s.StartTLS()
+	t.Cleanup(s.Close)
+	f.route(host, Backend{Addr: s.Listener.Addr().String()})
+}
+
+func TestForwardsToTLSBackend(t *testing.T) {
+	f := newFixture(t, 0)
+	f.tlsBackend(t, "web.localhost", echo)
+	got := f.echoed(t, f.request(http.MethodGet, "web.localhost", nil))
+	if got.Host != "web.localhost" {
+		t.Errorf("host %q", got.Host)
+	}
+}
+
+func TestSendsHTTPSOriginToTLSBackendOnOtherTLDs(t *testing.T) {
+	f := newFixture(t, 0)
+	f.tlsBackend(t, "web.test", echo)
+	req := f.request(http.MethodGet, "web.test", nil)
+	req.Header.Set("Origin", "https://web.test")
+	got := f.echoed(t, req)
+	if origin := got.Header.Get("Origin"); !strings.HasPrefix(origin, "https://localhost:") {
+		t.Errorf("origin %q", origin)
+	}
+}
+
+func TestRelaysWebSocketToTLSBackend(t *testing.T) {
+	f := newFixture(t, 0)
+	f.tlsBackend(t, "ws.localhost", wsEcho)
+	f.checkWebSocket(t, "ws.localhost")
+}
+
+func TestSendsGRPCToTLSBackendOverHTTP2(t *testing.T) {
+	f := newFixture(t, 0)
+	var proto atomic.Value
+	f.tlsBackend(t, "grpc.localhost", func(w http.ResponseWriter, r *http.Request) { proto.Store(r.Proto) })
+	req := f.request(http.MethodPost, "grpc.localhost", strings.NewReader("x"))
+	req.Header.Set("Content-Type", "application/grpc")
+	if res, _ := f.do(t, req); res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+	if proto.Load() != "HTTP/2.0" {
+		t.Errorf("backend saw %v", proto.Load())
+	}
+}
+
+func serveOn(t *testing.T, addr string, secure bool) *httptest.Server {
+	t.Helper()
+	ln, err := net.Listen("tcp", addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := httptest.NewUnstartedServer(http.HandlerFunc(echo))
+	s.Listener.Close()
+	s.Listener = ln
+	if secure {
+		s.StartTLS()
+	} else {
+		s.Start()
+	}
+	return s
+}
+
+func TestRelearnsSchemeWhenTLSServerTakesThePort(t *testing.T) {
+	plain := serveOn(t, "127.0.0.1:0", false)
+	addr := plain.Listener.Addr().String()
+	f := newFixture(t, 0)
+	f.route("web.localhost", Backend{Addr: addr})
+	if res, _ := f.do(t, f.request(http.MethodGet, "web.localhost", nil)); res.StatusCode != http.StatusOK {
+		t.Fatalf("plain status %d", res.StatusCode)
+	}
+	plain.Close()
+
+	secure := serveOn(t, addr, true)
+	defer secure.Close()
+	f.do(t, f.request(http.MethodGet, "web.localhost", nil)) // learns from this answer
+	if res, _ := f.do(t, f.request(http.MethodGet, "web.localhost", nil)); res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+func TestRelearnsSchemeWhenPlainServerTakesThePort(t *testing.T) {
+	secure := serveOn(t, "127.0.0.1:0", true)
+	addr := secure.Listener.Addr().String()
+	f := newFixture(t, 0)
+	f.route("web.localhost", Backend{Addr: addr})
+	if res, _ := f.do(t, f.request(http.MethodGet, "web.localhost", nil)); res.StatusCode != http.StatusOK {
+		t.Fatalf("secure status %d", res.StatusCode)
+	}
+	secure.Close()
+
+	plain := serveOn(t, addr, false)
+	defer plain.Close()
+	f.do(t, f.request(http.MethodGet, "web.localhost", nil)) // learns from this failure
+	if res, _ := f.do(t, f.request(http.MethodGet, "web.localhost", nil)); res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", res.StatusCode)
+	}
+}
+
+type slowListener struct {
+	net.Listener
+	delay time.Duration
+}
+
+func (l slowListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	time.Sleep(l.delay)
+	return c, err
+}
+
+func TestWaitsForTLSBackendThatIsBusy(t *testing.T) {
+	s := httptest.NewUnstartedServer(http.HandlerFunc(echo))
+	s.Listener = slowListener{s.Listener, 700 * time.Millisecond}
+	s.StartTLS()
+	defer s.Close()
+	f := newFixture(t, 0)
+	f.route("web.localhost", Backend{Addr: s.Listener.Addr().String()})
+	if res, body := f.do(t, f.request(http.MethodGet, "web.localhost", nil)); res.StatusCode != http.StatusOK {
+		t.Fatalf("status %d: %s", res.StatusCode, body)
+	}
+}
+
+func TestProbesHealthyBackendOnce(t *testing.T) {
+	var conns atomic.Int32
+	s := httptest.NewUnstartedServer(http.HandlerFunc(echo))
+	s.Config.ConnState = func(_ net.Conn, state http.ConnState) {
+		if state == http.StateNew {
+			conns.Add(1)
+		}
+	}
+	s.Start()
+	defer s.Close()
+	f := newFixture(t, 0)
+	f.route("web.localhost", Backend{Addr: s.Listener.Addr().String()})
+	for range 5 {
+		f.do(t, f.request(http.MethodGet, "web.localhost", nil))
+	}
+	// One for the probe and one kept alive. A zero hold skips the readiness dial.
+	if got, want := conns.Load(), int32(2); got != want {
+		t.Errorf("%d connections, want %d", got, want)
 	}
 }
