@@ -36,6 +36,7 @@ func newFixture(t *testing.T, hold time.Duration) *fixture {
 	}
 	h := New(lookup, Options{
 		TLDs:   []string{"localhost", "test"},
+		Port:   "443",
 		Hold:   hold,
 		Routes: func() []string { return []string{"api.localhost"} },
 	})

@@ -18,7 +18,6 @@ import (
 const (
 	loopHeader    = "X-Switchport"
 	localhostTLD  = "localhost"
-	publicPort    = "443"
 	holdRetryWait = 50 * time.Millisecond
 	grpcType      = "application/grpc"
 )
@@ -35,6 +34,7 @@ type Lookup func(host string) (Backend, bool)
 // Options configure a Handler.
 type Options struct {
 	TLDs   []string        // hostname suffixes this proxy serves
+	Port   string          // public port, sent as X-Forwarded-Port
 	Hold   time.Duration   // how long a request waits for a starting backend
 	Routes func() []string // hostnames listed on the not-found page
 }
@@ -138,7 +138,7 @@ func (p *handler) rewrite(r *httputil.ProxyRequest) {
 	r.Out.URL.Host = t.backend.Addr
 	r.Out.Host = r.In.Host
 	r.SetXForwarded()
-	r.Out.Header.Set("X-Forwarded-Port", publicPort)
+	r.Out.Header.Set("X-Forwarded-Port", p.opts.Port)
 	r.Out.Header.Set(loopHeader, "1")
 	if t.rewriteHost {
 		p.rewriteForHostChecks(r, t.backend.Addr)
