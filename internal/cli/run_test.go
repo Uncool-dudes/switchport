@@ -27,6 +27,15 @@ func TestMain(m *testing.M) {
 		return
 	}
 	stopGrace = 400 * time.Millisecond
+	if wd, err := os.Getwd(); err == nil {
+		moduleDir = wd
+	}
+	dir, err := os.MkdirTemp("", "switchport-test")
+	if err != nil {
+		panic(err)
+	}
+	defer os.RemoveAll(dir)
+	os.Setenv(stateDirEnv, dir)
 	os.Exit(m.Run())
 }
 
@@ -95,7 +104,7 @@ func TestParseRun(t *testing.T) {
 			t.Errorf("%q: %v", tc.in, err)
 			continue
 		}
-		if got.name.String() != tc.name || got.port != tc.port || strings.Join(got.argv, " ") != tc.argv {
+		if got.name != tc.name || got.port != tc.port || strings.Join(got.argv, " ") != tc.argv {
 			t.Errorf("%q: got %+v", tc.in, got)
 		}
 	}
@@ -146,6 +155,12 @@ func waitFor(t *testing.T, s *syncBuffer, pattern string) string {
 	return ""
 }
 
+func waitAddr(t *testing.T, s *syncBuffer) string {
+	t.Helper()
+	m := waitFor(t, s, `\(127\.0\.0\.1:\d+\)`)
+	return strings.Trim(m, "()")
+}
+
 func TestRunReturnsChildExitCode(t *testing.T) {
 	code, _ := runSwitchport(t.Context(), t, "exit7", nil)
 	if code != 7 {
@@ -170,8 +185,7 @@ func TestRunStopsOnCancelAndFreesPort(t *testing.T) {
 	go func() {
 		done <- Main(ctx, "test", []string{"run", "app", "--", os.Args[0]}, &bytes.Buffer{}, stderr)
 	}()
-	line := waitFor(t, stderr, `-> 127\.0\.0\.1:\d+`)
-	addr := strings.TrimPrefix(line, "-> ")
+	addr := waitAddr(t, stderr)
 	cancel()
 	if code := <-done; code != 128+int(syscall.SIGTERM) {
 		t.Fatalf("code %d", code)
@@ -191,8 +205,7 @@ func TestRunForcesTreeThatIgnoresSIGTERM(t *testing.T) {
 	go func() {
 		done <- Main(ctx, "test", []string{"run", "app", "--", os.Args[0]}, &bytes.Buffer{}, stderr)
 	}()
-	line := waitFor(t, stderr, `-> 127\.0\.0\.1:\d+`)
-	addr := strings.TrimPrefix(line, "-> ")
+	addr := waitAddr(t, stderr)
 	cancel()
 	select {
 	case <-done:
@@ -215,7 +228,7 @@ func TestRunSubstitutesPortPlaceholder(t *testing.T) {
 	go func() {
 		done <- Main(ctx, "test", []string{"run", "app", "--", "sh", "-c", script}, &bytes.Buffer{}, stderr)
 	}()
-	waitFor(t, stderr, `-> 127\.0\.0\.1:\d+`)
+	waitAddr(t, stderr)
 	cancel()
 	<-done
 }
@@ -235,15 +248,22 @@ func TestRunPinsPort(t *testing.T) {
 	go func() {
 		done <- Main(ctx, "test", []string{"run", "app", "--port", strconv.Itoa(port), "--", os.Args[0]}, &bytes.Buffer{}, stderr)
 	}()
-	waitFor(t, stderr, regexp.QuoteMeta("-> 127.0.0.1:"+strconv.Itoa(port)))
+	if got, want := waitAddr(t, stderr), "127.0.0.1:"+strconv.Itoa(port); got != want {
+		t.Fatalf("addr %s, want %s", got, want)
+	}
 	cancel()
 	<-done
 }
 
+// moduleDir survives t.Chdir in tests that build the binary.
+var moduleDir string
+
 func buildBinary(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "switchport")
-	out, err := exec.Command("go", "build", "-o", bin, "../../cmd/switchport").CombinedOutput()
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/Uncool-dudes/switchport/cmd/switchport")
+	cmd.Dir = moduleDir
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
@@ -255,7 +275,7 @@ func underPTY(t *testing.T, delay, keys string, argv ...string) string {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is needed to drive a pty")
 	}
-	args := append([]string{"testdata/pty_run.py", delay, keys}, argv...)
+	args := append([]string{filepath.Join(moduleDir, "testdata/pty_run.py"), delay, keys}, argv...)
 	out, err := exec.Command("python3", args...).CombinedOutput()
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out)

@@ -19,7 +19,9 @@ import (
 	"time"
 
 	"github.com/Uncool-dudes/switchport/internal/proc"
+	"github.com/Uncool-dudes/switchport/internal/registry"
 	"github.com/Uncool-dudes/switchport/internal/route"
+	"github.com/Uncool-dudes/switchport/internal/worktree"
 )
 
 const (
@@ -34,9 +36,11 @@ const (
 var stopGrace = 5 * time.Second
 
 type runOptions struct {
-	name route.Name
-	port int // zero means pick a free one
-	argv []string
+	name  string
+	port  int // zero means pick a free one
+	force bool
+	h2c   bool
+	argv  []string
 }
 
 // parseRun splits "[name] [--port n] -- command...". The separator is required
@@ -49,18 +53,12 @@ func parseRun(args []string, dir string) (runOptions, error) {
 	own, argv := args[:sep], args[sep+1:]
 
 	fs := flag.NewFlagSet("run", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
 	port := fs.Int("port", 0, "")
-	var positional []string
-	for len(own) > 0 {
-		if err := fs.Parse(own); err != nil {
-			return runOptions{}, err
-		}
-		own = fs.Args()
-		if len(own) > 0 {
-			positional = append(positional, own[0])
-			own = own[1:]
-		}
+	force := fs.Bool("force", false, "")
+	h2c := fs.Bool("h2c", false, "")
+	positional, err := parseMixed(fs, own)
+	if err != nil {
+		return runOptions{}, err
 	}
 	if len(positional) > 1 {
 		return runOptions{}, fmt.Errorf("unexpected argument %q before --", positional[1])
@@ -68,21 +66,33 @@ func parseRun(args []string, dir string) (runOptions, error) {
 	if *port < 0 || *port > 65535 {
 		return runOptions{}, fmt.Errorf("port %d is out of range", *port)
 	}
-
-	var name route.Name
-	var err error
+	name := nameFromDir(dir)
 	if len(positional) == 1 {
-		name, err = route.NewName(positional[0])
-	} else {
-		name, err = route.NewName(nameFromDir(dir))
-		if err != nil {
-			err = fmt.Errorf("cannot name this app from its directory, pass a name: %w", err)
-		}
+		name = positional[0]
+	} else if _, err := route.NewName(name); err != nil {
+		return runOptions{}, fmt.Errorf("cannot name this app from its directory, pass a name: %w", err)
 	}
-	if err != nil {
+	if _, err := route.NewName(name); err != nil {
 		return runOptions{}, err
 	}
-	return runOptions{name: name, port: *port, argv: argv}, nil
+	return runOptions{name: name, port: *port, force: *force, h2c: *h2c, argv: argv}, nil
+}
+
+// parseMixed parses flags that may appear before or after positional arguments.
+func parseMixed(fs *flag.FlagSet, args []string) ([]string, error) {
+	fs.SetOutput(io.Discard)
+	var positional []string
+	for len(args) > 0 {
+		if err := fs.Parse(args); err != nil {
+			return nil, err
+		}
+		args = fs.Args()
+		if len(args) > 0 {
+			positional = append(positional, args[0])
+			args = args[1:]
+		}
+	}
+	return positional, nil
 }
 
 var invalidLabelChars = regexp.MustCompile(`[^a-z0-9]+`)
@@ -114,19 +124,31 @@ func freePort() (int, error) {
 func runCommand(ctx context.Context, args []string, stderr io.Writer) int {
 	dir, err := os.Getwd()
 	if err != nil {
-		fmt.Fprintln(stderr, "switchport:", err)
-		return 1
+		return fail(stderr, err)
 	}
 	opts, err := parseRun(args, dir)
 	if err != nil {
 		fmt.Fprintf(stderr, "switchport: %v\n%s", err, usage)
 		return exitUsage
 	}
+	prefix := worktree.Prefix(ctx, dir)
+	name, err := qualifiedName(prefix, opts.name)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	reg, err := openRegistry()
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if !opts.force {
+		if err := reg.Available(name); err != nil {
+			return fail(stderr, fmt.Errorf("%w, use --force to replace it", err))
+		}
+	}
 	port := opts.port
 	if port == 0 {
 		if port, err = freePort(); err != nil {
-			fmt.Fprintln(stderr, "switchport:", err)
-			return 1
+			return fail(stderr, err)
 		}
 	}
 
@@ -155,45 +177,99 @@ func runCommand(ctx context.Context, args []string, stderr io.Writer) int {
 		close(exited)
 	}()
 
+	app := appTemplate{name: name, worktree: prefix, opts: opts, port: port}
 	discoverCtx, stopDiscover := context.WithCancel(ctx)
-	discovered := make(chan struct{})
+	registered := make(chan error, 1)
 	go func() {
-		defer close(discovered)
-		reportDiscovery(discoverCtx, stderr, opts, tracker, port, exited)
+		registered <- register(discoverCtx, stderr, reg, app, tracker, exited)
 	}()
 
+	var regErr error
 	select {
 	case <-exited:
 	case <-ctx.Done():
+	case regErr = <-registered:
+		if regErr == nil {
+			select {
+			case <-exited:
+			case <-ctx.Done():
+			}
+		}
 	}
 	stopDiscover()
-	<-discovered
+	if regErr == nil {
+		regErr = waitRegistered(registered)
+	}
+	if err := reg.RemoveApp(name, os.Getpid()); err != nil {
+		fmt.Fprintln(stderr, "switchport:", err)
+	}
 	if err := stopTree(tracker); err != nil {
 		fmt.Fprintln(stderr, "switchport:", err)
 		_ = cmd.Process.Kill()
 	}
 	<-exited
 
+	if regErr != nil {
+		return 1
+	}
 	return exitCode(cmd.ProcessState)
 }
 
-func reportDiscovery(ctx context.Context, stderr io.Writer, opts runOptions, tr *proc.Tracker, port int, exited <-chan struct{}) {
+type appTemplate struct {
+	name     route.Name
+	worktree string
+	opts     runOptions
+	port     int
+}
+
+// register discovers the port and adds the route. It returns an error only
+// when the command must stop because it cannot own its name.
+func register(ctx context.Context, stderr io.Writer, reg *registry.Registry, a appTemplate, tr *proc.Tracker, exited <-chan struct{}) error {
 	r, err := proc.Discover(ctx, tr, proc.Options{
-		Assigned: port,
-		Pinned:   opts.port != 0,
+		Assigned: a.port,
+		Pinned:   a.opts.port != 0,
 		Settle:   discoverSettle,
 		Timeout:  discoverTimeout,
 		Exited:   exited,
 	})
-	switch {
-	case err == nil:
-		fmt.Fprintf(stderr, "switchport: %s -> %s\n", opts.name, r.Addr())
-		if len(r.Candidates) > 1 {
-			fmt.Fprintf(stderr, "switchport: %s opened %d ports, use --port to choose\n", opts.name, len(r.Candidates))
+	if err != nil {
+		if !errors.Is(err, context.Canceled) {
+			fmt.Fprintf(stderr, "switchport: %s: %v\n", a.name, err)
 		}
-	case errors.Is(err, context.Canceled):
-	default:
-		fmt.Fprintf(stderr, "switchport: %s: %v\n", opts.name, err)
+		return nil
+	}
+	procs, err := tr.Snapshot()
+	if err != nil {
+		fmt.Fprintln(stderr, "switchport:", err)
+		return nil
+	}
+	err = reg.AddApp(route.App{
+		Name:     a.name,
+		Addr:     r.Addr(),
+		H2C:      a.opts.h2c,
+		Worktree: a.worktree,
+		PID:      os.Getpid(),
+		Procs:    procs,
+	}, a.opts.force)
+	if err != nil {
+		fmt.Fprintf(stderr, "switchport: %v\n", err)
+		return err
+	}
+	fmt.Fprintf(stderr, "switchport: %s -> %s (%s)\n", a.name, routeURL(a.name), r.Addr())
+	if len(r.Candidates) > 1 {
+		fmt.Fprintf(stderr, "switchport: %s opened %d ports, use --port to choose\n", a.name, len(r.Candidates))
+	}
+	return nil
+}
+
+// waitRegistered waits for a canceled register to finish, so that no route is
+// added after the wrapper removes it.
+func waitRegistered(registered <-chan error) error {
+	select {
+	case err := <-registered:
+		return err
+	case <-time.After(killWait):
+		return nil
 	}
 }
 
