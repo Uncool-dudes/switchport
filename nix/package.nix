@@ -21,7 +21,9 @@ buildGoModule {
 
   meta = {
     description = "Named HTTPS URLs for any local dev server";
+    homepage = "https://github.com/Uncool-dudes/switchport";
+    license = lib.licenses.mit;
     mainProgram = "switchport";
-    platforms = lib.platforms.unix;
+    platforms = lib.platforms.linux ++ [ "aarch64-darwin" ];
   };
 }
