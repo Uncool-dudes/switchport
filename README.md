@@ -143,7 +143,8 @@ Docker containers do not run under `switchport run`. Publish a port and use
 
 State lives in `~/.switchport`, or `SWITCHPORT_STATE_DIR`.
 
-See [SPEC.md](SPEC.md) for the design and `spike/` for the experiments behind it.
+See [ROADMAP.md](ROADMAP.md) for what is next, [SPEC.md](SPEC.md) for the design,
+and `spike/` for the experiments behind it.
 
 ## Status
 

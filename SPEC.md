@@ -309,7 +309,6 @@ Known limits:
 
 Must answer before finalizing:
 
-- License.
 - Should `run` start the daemon automatically, or require `setup` first? portless auto-starts, and the first-run experience is the main comparison.
 - Should ports be stable per name across restarts? Stable ports help tools that cache them. Random ports expose hidden dependencies.
 - What happens when a name is already in use: fail, replace, or suffix?
