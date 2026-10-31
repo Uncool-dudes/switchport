@@ -68,6 +68,14 @@ func TestRefusesKeyReadableByOthers(t *testing.T) {
 	}
 }
 
+func TestRefusesTLDOutsideConstraints(t *testing.T) {
+	_, dir := load(t)
+	_, err := Load(dir, []string{"localhost", "dev"})
+	if err == nil || !strings.Contains(err.Error(), "uninstall") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestConcurrentHandshakesMintOnce(t *testing.T) {
 	c, _ := load(t)
 	var wg sync.WaitGroup

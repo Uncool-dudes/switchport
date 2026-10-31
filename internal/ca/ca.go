@@ -15,6 +15,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -73,6 +74,11 @@ func Load(dir string, tlds []string) (*CA, error) {
 	cert, key, err := read(certPath, keyPath)
 	if err != nil {
 		return nil, err
+	}
+	for _, tld := range tlds {
+		if !slices.Contains(cert.PermittedDNSDomains, tld) {
+			return nil, fmt.Errorf("the CA cannot sign for .%s, run switchport uninstall and then setup with this TLD", tld)
+		}
 	}
 	return &CA{cert: cert, key: key, path: certPath, tlds: tlds, leaves: map[string]*tls.Certificate{}}, nil
 }
