@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/Uncool-dudes/switchport/internal/ca"
+	"github.com/Uncool-dudes/switchport/internal/dns"
 	"github.com/Uncool-dudes/switchport/internal/proxy"
 	"github.com/Uncool-dudes/switchport/internal/registry"
 )
@@ -41,6 +42,16 @@ const (
 	httpPort        = 80
 	fallbackPort    = 8443
 )
+
+// DNSAddr is where the daemon answers for custom TLDs.
+const DNSAddr = "127.0.0.1:53535"
+
+// localTLD needs no DNS: browsers and the OS resolve it themselves.
+const localTLD = "localhost"
+
+func customTLDs(tlds []string) []string {
+	return slices.DeleteFunc(slices.Clone(tlds), func(t string) bool { return t == localTLD })
+}
 
 // ErrRunning means another daemon already serves this state directory.
 var ErrRunning = errors.New("daemon already running")
@@ -94,6 +105,16 @@ func Run(ctx context.Context, o Options) error {
 	var redirect *http.Server
 	if port == httpsPort {
 		redirect = serveRedirect(o.Log)
+	}
+
+	if custom := customTLDs(o.TLDs); len(custom) > 0 {
+		pc, err := net.ListenPacket("udp4", DNSAddr)
+		if err != nil {
+			srv.Close()
+			return fmt.Errorf("serve DNS: %w", err)
+		}
+		defer pc.Close()
+		go dns.Serve(pc, custom)
 	}
 
 	statusPath := filepath.Join(o.Dir, statusFile)
