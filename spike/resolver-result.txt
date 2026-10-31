@@ -1,0 +1,33 @@
+  domain   : devroutespike
+  nameserver[0] : 127.0.0.1
+  port     : 53535
+  flags    : Request A records, Request AAAA records
+--
+  domain   : localhost
+  nameserver[0] : 127.0.0.1
+  port     : 53535
+  flags    : Request A records, Request AAAA records
+--- plain.localhost
+dscacheutil: name: localhost ipv6_address: ::1 name: localhost ip_address: 127.0.0.1 
+libc-getaddrinfo: ::1 127.0.0.1 
+python: ['127.0.0.1', '::1']
+node: ::1,127.0.0.1
+go-cgo: plain.localhost                    [::1 127.0.0.1] <nil>
+go-nocgo: plain.localhost                    [::1 127.0.0.1] <nil>
+--- a.b.localhost
+dscacheutil: name: localhost ipv6_address: ::1 name: localhost ip_address: 127.0.0.1 
+libc-getaddrinfo: ::1 127.0.0.1 
+python: ['127.0.0.1', '::1']
+node: ::1,127.0.0.1
+go-cgo: a.b.localhost                      [::1 127.0.0.1] <nil>
+go-nocgo: a.b.localhost                      [::1 127.0.0.1] <nil>
+--- plain.devroutespike
+dscacheutil: name: plain.devroutespike ip_address: 127.0.0.1 
+libc-getaddrinfo: 127.0.0.1 
+python: ['127.0.0.1']
+node: 127.0.0.1
+go-cgo: plain.devroutespike                [127.0.0.1] <nil>
+go-nocgo: plain.devroutespike                [127.0.0.1] <nil>
+== queries
+   1 QUERY _dns.resolver.arpa
+   2 QUERY plain.devroutespike
